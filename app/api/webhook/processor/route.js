@@ -10,25 +10,40 @@ async function handler(req) {
   try {
     const body = await req.json();
 
-    // Extract IvozProvider facts
+    // 1. Safe Metadata Extraction from IvozProvider
     const callId = body.callid;
     const tenantId = body.company_id || "default_tenant";
     const agentExt = body.user_id || "Unknown";
     const customerPhone = body.caller_number || "Unknown";
 
-    // 1. Download audio file from IvozProvider
+    if (!callId) {
+      return NextResponse.json({ error: "Missing callid in payload" }, { status: 400 });
+    }
+
+    // 2. Fetch Audio from IvozProvider
     const audioRes = await fetch(`https://your-ivoz-domain.com/api/v1/recordings/${callId}`, {
       headers: { 'Authorization': `Bearer ${process.env.IVOZ_API_KEY}` }
     });
+
+    if (!audioRes.ok) {
+      throw new Error(`Failed to download audio from IvozProvider: ${audioRes.statusText}`);
+    }
     
     const tmpFilePath = path.join('/tmp', `${callId}.wav`);
     const fileStream = fs.createWriteStream(tmpFilePath);
     await pipeline(audioRes.body, fileStream);
 
-    // 2. Upload to Google Drive for permanent playback
+    // 3. Upload to Google Drive (Safely parsing JSON from environment variables)
+    if (!process.env.GOOGLE_DRIVE_CREDENTIALS) {
+      throw new Error("GOOGLE_DRIVE_CREDENTIALS environment variable is missing.");
+    }
+
     const credentials = JSON.parse(process.env.GOOGLE_DRIVE_CREDENTIALS);
     const auth = new google.auth.JWT(
-      credentials.client_email, null, credentials.private_key, ['https://www.googleapis.com/auth/drive']
+      credentials.client_email, 
+      null, 
+      credentials.private_key, 
+      ['https://www.googleapis.com/auth/drive']
     );
     const drive = google.drive({ version: 'v3', auth });
 
@@ -38,7 +53,7 @@ async function handler(req) {
       fields: 'id, webViewLink'
     });
 
-    // 3. Process with Gemini 2.5 Flash Lite
+    // 4. Process Audio with Gemini 2.5 Flash Lite
     const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const fileManager = new GoogleAIFileManager({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -70,7 +85,7 @@ async function handler(req) {
 
     const aiData = JSON.parse(analytics.text);
 
-    // 4. Combine PBX metadata + Gemini AI analysis
+    // 5. Build Merged Bamisoro Analytics Object
     const finalRecord = {
       call_id: callId,
       tenant_id: tenantId,
@@ -81,9 +96,9 @@ async function handler(req) {
       processed_at: new Date().toISOString()
     };
 
-    console.log("Final Bamisoro Record:", finalRecord);
+    console.log("Bamiso Analytics Output:", finalRecord);
 
-    // Clean up temporary storage
+    // Cleanup temp file
     if (fs.existsSync(tmpFilePath)) fs.unlinkSync(tmpFilePath);
 
     return NextResponse.json({ success: true, data: finalRecord });
@@ -94,5 +109,5 @@ async function handler(req) {
   }
 }
 
-// Wrap with QStash signature verification for security
+// QStash signature verification ensures unauthorized external users cannot trigger this endpoint
 export const POST = verifySignatureAppRouter(handler);
