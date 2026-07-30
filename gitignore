@@ -1,0 +1,9 @@
+# Local Environment Variables
+.env
+.env*.local
+.env.production
+
+# Dependencies & Builds
+/node_modules
+/.next/
+/out/
