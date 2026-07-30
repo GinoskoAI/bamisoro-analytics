@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 export default function BamisoroDashboard() {
   const [activeCallId, setActiveCallId] = useState("CALL-109348");
 
-  // Mock data representing the merged PBX + Gemini output
+  // Mock data representing the merged PBX + Gemini output  
   const liveCalls = [
     {
       call_id: "CALL-109348",
