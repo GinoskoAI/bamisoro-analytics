@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'; // Prevents Next.js from caching this webhook at build time
+
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
@@ -5,11 +7,15 @@ import { pipeline } from 'stream/promises';
 import { google } from 'googleapis';
 import { GoogleGenAI } from '@google/genai';
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
+import { createClient } from '@supabase/supabase-js';
 
 async function handler(req) {
+  let tmpFilePath = '';
+
   try {
     const body = await req.json();
 
+    // 1. Safe Metadata Extraction from IvozProvider
     const callId = body.callid;
     const tenantId = body.company_id || "default_tenant";
     const agentExt = body.user_id || "Unknown";
@@ -19,20 +25,37 @@ async function handler(req) {
       return NextResponse.json({ error: "Missing callid in payload" }, { status: 400 });
     }
 
-    // 1. Fetch Audio from IvozProvider
-    const audioRes = await fetch(`https://your-ivoz-domain.com/api/v1/recordings/${callId}`, {
-      headers: { 'Authorization': `Bearer ${process.env.IVOZ_API_KEY}` }
+    // 2. IVOZPROVIDER JWT AUTHENTICATION
+    // Authenticating against your specific Azure IP
+    const authRes = await fetch('https://62.84.182.233/api/brand/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: process.env.IVOZ_USERNAME,
+        password: process.env.IVOZ_PASSWORD
+      })
+    });
+
+    if (!authRes.ok) {
+      throw new Error(`Ivoz Auth Failed: ${authRes.statusText}`);
+    }
+    
+    const { token } = await authRes.json();
+
+    // 3. FETCH AUDIO USING JWT TOKEN
+    const audioRes = await fetch(`https://62.84.182.233/api/v1/recordings/${callId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
     });
 
     if (!audioRes.ok) {
       throw new Error(`Failed to download audio from IvozProvider: ${audioRes.statusText}`);
     }
     
-    const tmpFilePath = path.join('/tmp', `${callId}.wav`);
+    tmpFilePath = path.join('/tmp', `${callId}.wav`);
     const fileStream = fs.createWriteStream(tmpFilePath);
     await pipeline(audioRes.body, fileStream);
 
-    // 2. Upload to Google Drive
+    // 4. UPLOAD TO GOOGLE DRIVE
     if (!process.env.GOOGLE_DRIVE_CREDENTIALS) {
       throw new Error("GOOGLE_DRIVE_CREDENTIALS environment variable is missing.");
     }
@@ -52,7 +75,7 @@ async function handler(req) {
       fields: 'id, webViewLink'
     });
 
-    // 3. Process Audio with Gemini 2.5 Flash Lite (v2.13.0 syntax)
+    // 5. PROCESS AUDIO WITH GEMINI 2.5 FLASH LITE
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const geminiUpload = await ai.files.upload({
@@ -86,27 +109,42 @@ async function handler(req) {
 
     const aiData = JSON.parse(analytics.text);
 
-    // 4. Build Merged Bamisoro Analytics Object
+    // 6. BUILD FINAL BAMISORO RECORD
     const finalRecord = {
       call_id: callId,
       tenant_id: tenantId,
       agent_ext: agentExt,
       customer_phone: customerPhone,
       drive_link: driveResponse.data.webViewLink,
-      ...aiData,
-      processed_at: new Date().toISOString()
+      ...aiData
     };
 
-    console.log("Bamisoro Analytics Output:", finalRecord);
+    // 7. SAVE TO SUPABASE LIVE DATABASE
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL, 
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    );
 
-    if (fs.existsSync(tmpFilePath)) fs.unlinkSync(tmpFilePath);
+    const { error: dbError } = await supabase
+      .from('bamisoro_calls')
+      .insert([finalRecord]);
+
+    if (dbError) throw new Error(`Supabase Insert Error: ${dbError.message}`);
+
+    console.log("Successfully processed and saved call:", callId);
 
     return NextResponse.json({ success: true, data: finalRecord });
 
   } catch (error) {
     console.error("Processor Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  } finally {
+    // 8. CLEANUP: Always remove the temporary file to prevent memory leaks on Vercel
+    if (tmpFilePath && fs.existsSync(tmpFilePath)) {
+      fs.unlinkSync(tmpFilePath);
+    }
   }
 }
 
+// QStash signature verification ensures unauthorized users cannot trigger this endpoint
 export const POST = verifySignatureAppRouter(handler);
