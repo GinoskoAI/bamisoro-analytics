@@ -3,14 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { pipeline } from 'stream/promises';
 import { google } from 'googleapis';
-import { GoogleAIFileManager, GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 
 async function handler(req) {
   try {
     const body = await req.json();
 
-    // 1. Safe Metadata Extraction from IvozProvider
     const callId = body.callid;
     const tenantId = body.company_id || "default_tenant";
     const agentExt = body.user_id || "Unknown";
@@ -20,7 +19,7 @@ async function handler(req) {
       return NextResponse.json({ error: "Missing callid in payload" }, { status: 400 });
     }
 
-    // 2. Fetch Audio from IvozProvider
+    // 1. Fetch Audio from IvozProvider
     const audioRes = await fetch(`https://your-ivoz-domain.com/api/v1/recordings/${callId}`, {
       headers: { 'Authorization': `Bearer ${process.env.IVOZ_API_KEY}` }
     });
@@ -33,7 +32,7 @@ async function handler(req) {
     const fileStream = fs.createWriteStream(tmpFilePath);
     await pipeline(audioRes.body, fileStream);
 
-    // 3. Upload to Google Drive (Safely parsing JSON from environment variables)
+    // 2. Upload to Google Drive
     if (!process.env.GOOGLE_DRIVE_CREDENTIALS) {
       throw new Error("GOOGLE_DRIVE_CREDENTIALS environment variable is missing.");
     }
@@ -53,13 +52,15 @@ async function handler(req) {
       fields: 'id, webViewLink'
     });
 
-    // 4. Process Audio with Gemini 2.5 Flash Lite
-    const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const fileManager = new GoogleAIFileManager({ apiKey: process.env.GEMINI_API_KEY });
+    // 3. Process Audio with Gemini 2.5 Flash Lite (v2.13.0 syntax)
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-    const geminiUpload = await fileManager.uploadFile(tmpFilePath, {
-      mimeType: "audio/wav",
-      displayName: `Call_${callId}`
+    const geminiUpload = await ai.files.upload({
+      file: tmpFilePath,
+      config: { 
+        mimeType: 'audio/wav',
+        displayName: `Call_${callId}` 
+      }
     });
 
     const prompt = `
@@ -77,15 +78,15 @@ async function handler(req) {
       }
     `;
 
-    const analytics = await genai.models.generateContent({
+    const analytics = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: [geminiUpload.file, { text: prompt }],
+      contents: [geminiUpload, { text: prompt }],
       config: { responseMimeType: "application/json" }
     });
 
     const aiData = JSON.parse(analytics.text);
 
-    // 5. Build Merged Bamisoro Analytics Object
+    // 4. Build Merged Bamisoro Analytics Object
     const finalRecord = {
       call_id: callId,
       tenant_id: tenantId,
@@ -96,9 +97,8 @@ async function handler(req) {
       processed_at: new Date().toISOString()
     };
 
-    console.log("Bamiso Analytics Output:", finalRecord);
+    console.log("Bamisoro Analytics Output:", finalRecord);
 
-    // Cleanup temp file
     if (fs.existsSync(tmpFilePath)) fs.unlinkSync(tmpFilePath);
 
     return NextResponse.json({ success: true, data: finalRecord });
@@ -109,5 +109,4 @@ async function handler(req) {
   }
 }
 
-// QStash signature verification ensures unauthorized external users cannot trigger this endpoint
 export const POST = verifySignatureAppRouter(handler);
