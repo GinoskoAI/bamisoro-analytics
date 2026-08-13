@@ -10,7 +10,9 @@ export const runtime = 'nodejs';
 const UPSTREAM = 'https://62.84.182.233';
 
 async function proxy(req, ctx) {
-  const path = (ctx.params && ctx.params.path ? ctx.params.path : []).join('/');
+  // Next 15+ passes params as a Promise — handle both shapes
+  const p = ctx.params instanceof Promise ? await ctx.params : ctx.params;
+  const path = (p && p.path ? p.path : []).join('/');
   const qs = req.nextUrl.search;
   const upstreamUrl = `${UPSTREAM}/api/${path}${qs}`;
 
