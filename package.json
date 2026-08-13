@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
+    "@supabase/supabase-js": "^2.112.3",
     "@upstash/qstash": "^2.7.17",
     "googleapis": "^144.0.0",
     "next": "latest",
