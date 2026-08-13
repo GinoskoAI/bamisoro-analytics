@@ -38,6 +38,8 @@ async function proxy(req, ctx) {
   const respHeaders = {
     'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
     'access-control-allow-origin': '*',
+    'x-debug-path': path || '(empty)',
+    'x-upstream-url': upstreamUrl,
   };
   const total = upstream.headers.get('x-total-items');
   if (total) respHeaders['x-total-items'] = total;
