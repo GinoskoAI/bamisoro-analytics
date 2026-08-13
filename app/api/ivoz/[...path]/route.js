@@ -14,7 +14,8 @@ async function proxy(req, ctx) {
   const p = ctx.params instanceof Promise ? await ctx.params : ctx.params;
   const path = (p && p.path ? p.path : []).join('/');
   const qs = req.nextUrl.search;
-  const upstreamUrl = `${UPSTREAM}/api/${path}${qs}`;
+  // path arrives as e.g. "api/brand/admin_login" (script base = /api/ivoz)
+  const upstreamUrl = `${UPSTREAM}/${path}${qs}`;
 
   const headers = {};
   const auth = req.headers.get('authorization');
