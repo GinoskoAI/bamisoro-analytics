@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 // Next.js automatically injects variables prefixed with NEXT_PUBLIC_ into the browser
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 export default function BamisoroDashboard() {
   const [liveCalls, setLiveCalls] = useState([]);
@@ -14,6 +14,10 @@ export default function BamisoroDashboard() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!supabase) {
+      setIsLoading(false);
+      return;
+    }
     // 1. Fetch initial historical calls on load
     const fetchCalls = async () => {
       const { data, error } = await supabase
